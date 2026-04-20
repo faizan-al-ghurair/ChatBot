@@ -1,0 +1,15 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+
+# Node
+node_modules/
+
+# Logs / generated output
+ai_responses.txt
+PyHelper_history.txt
+notes.txt
