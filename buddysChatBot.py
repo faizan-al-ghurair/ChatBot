@@ -1,8 +1,17 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
+from dotenv import load_dotenv
+from enum import Enum
 import anthropic
+import openai
+import httpx
+import tempfile
+import os
 import json
+
+load_dotenv()
 
 app = FastAPI()
 
@@ -13,30 +22,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = anthropic.Anthropic()
+# ─── clients ─────────────────────────────────────────────────────────────────
+
+anthropic_client = anthropic.Anthropic(
+    api_key=os.environ.get("ANTHROPIC_API_KEY")
+)
+
+openai_client = openai.OpenAI(
+    api_key=os.environ.get("OPENAI_API_KEY")
+)
+
+# ─── navigation enum ─────────────────────────────────────────────────────────
+
+class Nav(str, Enum):
+    LATE_LOGIN                  = "lateLogin"
+    NOTIFICATIONS               = "Notifications"
+    MY_CALENDAR                 = "myCalendar"
+    MY_FINANCES                 = "myFinances"
+    HR                          = "hr"
+    MY_SCORE                    = "myScore"
+    LEAVES                      = "leaves"
+    PAY_SLIPS                   = "paySlips"
+    DOCUMENTS                   = "documents"
+    CREATE_TICKET               = "createTicket"
+    VEHICLE_PARTNER_SEARCH      = "VehiclePartnerSearchList"
+    BREAK_DOWN                  = "breakDownScreen"
+    BEHAVIOUR_BONUS             = "behaviourBonus"
+    CHALLENGES_LIST             = "challengesList"
+    OUTSTANDING                 = "outStanding"
+    ACCOUNT_STATEMENT           = "accountStatement"
+    FINES                       = "fines"
+    PROFILE_PHOTO               = "profilePhoto"
 
 # ─── navigation map ───────────────────────────────────────────────────────────
-# each screen has its vectors (all text from the screen) which helps
-# claude understand what the screen is about in any language
 
 NAVIGATION_MAP = {
-    "lateLogin": {
+    Nav.LATE_LOGIN: {
         "id": 100,
-        "navigation": "lateLogin",
+        "navigation": Nav.LATE_LOGIN,
         "navigationText": "Late Login",
         "vectors": [
             "You are late for your shift!", "Unblock your meter device",
-            "Request late login", "late", "Do you have a reason for a late login?",
+            "Request late login", "late login", "Do you have a reason for a late login?",
             "Requesting a late login without justification will result in an internal fine",
             "Report late login", "Your Late login request has been sent!",
             "It will take 10 to 15 minutes to unlock your meter.",
             "Your Late login has been accepted!", "Your Late login has been rejected!",
-            "تأخر في تسجيل الدخول", "دیر سے لاگ ان", "میٹر انلاک"
+            "تأخر في تسجيل الدخول", "دیر سے لاگ ان", "میٹر انلاک", "late"
         ]
     },
-    "Notifications": {
+    Nav.NOTIFICATIONS: {
         "id": 200,
-        "navigation": "Notifications",
+        "navigation": Nav.NOTIFICATIONS,
         "navigationText": "Notifications",
         "vectors": [
             "Notifications", "All the latest news in a single page",
@@ -45,9 +82,9 @@ NAVIGATION_MAP = {
             "إشعارات", "رسائل", "اطلاعات", "نوٹیفکیشن", "پیغام"
         ]
     },
-    "myCalendar": {
+    Nav.MY_CALENDAR: {
         "id": 300,
-        "navigation": "myCalendar",
+        "navigation": Nav.MY_CALENDAR,
         "navigationText": "My Calendar",
         "vectors": [
             "Calendar", "Your calendar", "my calendar", "event", "appointment",
@@ -56,9 +93,9 @@ NAVIGATION_MAP = {
             "تقويم", "کیلنڈر", "شيدول", "تاریخ"
         ]
     },
-    "myFinances": {
+    Nav.MY_FINANCES: {
         "id": 400,
-        "navigation": "myFinances",
+        "navigation": Nav.MY_FINANCES,
         "navigationText": "My Finances",
         "vectors": [
             "collections", "Finances", "Daily avg", "Commission", "Outstanding",
@@ -69,9 +106,9 @@ NAVIGATION_MAP = {
             "ماليتي", "مالیات", "کمائی", "پیسے", "آمدنی"
         ]
     },
-    "hr": {
+    Nav.HR: {
         "id": 500,
-        "navigation": "hr",
+        "navigation": Nav.HR,
         "navigationText": "HR",
         "vectors": [
             "HR", "Everything you need related to your leaves, documents and payslips",
@@ -80,9 +117,9 @@ NAVIGATION_MAP = {
             "الموارد البشرية", "ایچ آر", "دستاویزات", "تنخواہ"
         ]
     },
-    "MyScore": {
+    Nav.MY_SCORE: {
         "id": 600,
-        "navigation": "myScore",
+        "navigation": Nav.MY_SCORE,
         "navigationText": "My Score",
         "vectors": [
             "My Score", "Learn how to be a better driver", "overall score",
@@ -92,9 +129,9 @@ NAVIGATION_MAP = {
             "درجه", "اسکور", "کارکردگی", "رویہ"
         ]
     },
-    "leaves": {
+    Nav.LEAVES: {
         "id": 700,
-        "navigation": "leaves",
+        "navigation": Nav.LEAVES,
         "navigationText": "Leaves",
         "vectors": [
             "Leaves", "Your leaves in a single place", "Upcoming leaves",
@@ -104,9 +141,9 @@ NAVIGATION_MAP = {
             "إجازة", "إجازات", "چھٹی", "رخصت", "سالانہ چھٹی"
         ]
     },
-    "paySlips": {
+    Nav.PAY_SLIPS: {
         "id": 800,
-        "navigation": "paySlips",
+        "navigation": Nav.PAY_SLIPS,
         "navigationText": "Pay Slips",
         "vectors": [
             "Payslips", "salary slip", "pay slip", "monthly pay",
@@ -114,18 +151,18 @@ NAVIGATION_MAP = {
             "تنخواہ سلپ", "تنخواہ"
         ]
     },
-    "documents": {
+    Nav.DOCUMENTS: {
         "id": 900,
-        "navigation": "documents",
+        "navigation": Nav.DOCUMENTS,
         "navigationText": "Documents",
         "vectors": [
             "Documents", "Passport", "insurance", "VISA", "driving license",
             "documents", "files", "وثائق", "مستندات", "دستاویزات"
         ]
     },
-    "createTicket": {
-        "id": 1500,
-        "navigation": "createTicket",
+    Nav.CREATE_TICKET: {
+        "id": 1000,
+        "navigation": Nav.CREATE_TICKET,
         "navigationText": "Create Ticket",
         "vectors": [
             "ticket", "support ticket", "open ticket", "new ticket",
@@ -133,9 +170,9 @@ NAVIGATION_MAP = {
             "تذكرة", "شكوى", "ٹکٹ", "شکایت"
         ]
     },
-    "VehiclePartnerSearchList": {
-        "id": 1500,
-        "navigation": "VehiclePartnerSearchList",
+    Nav.VEHICLE_PARTNER_SEARCH: {
+        "id": 1100,
+        "navigation": Nav.VEHICLE_PARTNER_SEARCH,
         "navigationText": "Vehicle Partner Search",
         "vectors": [
             "search partner", "find partner", "partnership request",
@@ -143,9 +180,9 @@ NAVIGATION_MAP = {
             "شريك", "پارٹنر تلاش"
         ]
     },
-    "breakDownScreen": {
-        "id": 1500,
-        "navigation": "breakDownScreen",
+    Nav.BREAK_DOWN: {
+        "id": 1200,
+        "navigation": Nav.BREAK_DOWN,
         "navigationText": "Break Down",
         "vectors": [
             "Breakdown", "On Demand Maintenance", "Did you have a breakdown",
@@ -154,18 +191,18 @@ NAVIGATION_MAP = {
             "عطل", "خرابی", "گاڑی خراب"
         ]
     },
-    "behaviourBonus": {
-        "id": 1500,
-        "navigation": "behaviourBonus",
+    Nav.BEHAVIOUR_BONUS: {
+        "id": 1300,
+        "navigation": Nav.BEHAVIOUR_BONUS,
         "navigationText": "Behaviour Bonus",
         "vectors": [
             "behaviour bonus", "win 400", "Reach 4.3", "bonus score",
             "مكافأة السلوك", "بونس", "انعام"
         ]
     },
-    "challengesList": {
-        "id": 1500,
-        "navigation": "challengesList",
+    Nav.CHALLENGES_LIST: {
+        "id": 1400,
+        "navigation": Nav.CHALLENGES_LIST,
         "navigationText": "Challenges",
         "vectors": [
             "Challenges", "CT Champions", "Fly for free",
@@ -173,9 +210,9 @@ NAVIGATION_MAP = {
             "تحديات", "چیلنج"
         ]
     },
-    "outStanding": {
+    Nav.OUTSTANDING: {
         "id": 1500,
-        "navigation": "outStanding",
+        "navigation": Nav.OUTSTANDING,
         "navigationText": "Outstanding",
         "vectors": [
             "Outstanding", "Outstanding amount", "Total Outstanding",
@@ -184,18 +221,18 @@ NAVIGATION_MAP = {
             "المستحقات", "باقی رقم"
         ]
     },
-    "accountStatement": {
-        "id": 1500,
-        "navigation": "accountStatement",
+    Nav.ACCOUNT_STATEMENT: {
+        "id": 1600,
+        "navigation": Nav.ACCOUNT_STATEMENT,
         "navigationText": "Account Statement",
         "vectors": [
             "Account Statement", "transactions", "Download Account Statement",
             "financial report", "statement", "كشف الحساب", "اکاؤنٹ سٹیٹمنٹ"
         ]
     },
-    "fines": {
-        "id": 1500,
-        "navigation": "fines",
+    Nav.FINES: {
+        "id": 1700,
+        "navigation": Nav.FINES,
         "navigationText": "Fines",
         "vectors": [
             "Fine enquiry", "Dispute fine", "how much fine i have",
@@ -204,14 +241,24 @@ NAVIGATION_MAP = {
             "الغرامات", "جريمة", "جرمانہ", "فائن"
         ]
     },
+    Nav.PROFILE_PHOTO: {
+        "id": 1800,
+        "navigation": Nav.PROFILE_PHOTO,
+        "navigationText": "Profile Photo",
+        "vectors": [
+            "profile photo", "upload photo", "change photo", "update photo",
+            "profile picture", "profile image", "change profile", "my photo",
+            "تصویر", "پروفائل تصویر", "صورة الملف الشخصي", "تغيير الصورة"
+        ]
+    },
 }
 
-# ─── build a clean summary for claude to understand all screens ───────────────
+# ─── build navigation context for claude ─────────────────────────────────────
 
 def build_navigation_context() -> str:
     lines = []
     for key, screen in NAVIGATION_MAP.items():
-        vectors_sample = ", ".join(screen["vectors"][:8])
+        vectors_sample = ", ".join(screen["vectors"][:10])
         lines.append(
             f'- Screen: "{screen["navigation"]}" | '
             f'Label: "{screen["navigationText"]}" | '
@@ -226,7 +273,8 @@ NAVIGATION_CONTEXT = build_navigation_context()
 SYSTEM_PROMPT = f"""You are a smart navigation assistant for a taxi driver mobile app.
 Your ONLY job is to understand what screen the user wants to go to and return a JSON response.
 
-You must ALWAYS respond with valid JSON only. No extra text, no explanation, just JSON.
+You must ALWAYS respond with raw valid JSON only.
+No markdown, no backticks, no explanation. Just the JSON object.
 
 AVAILABLE SCREENS:
 {NAVIGATION_CONTEXT}
@@ -234,13 +282,13 @@ AVAILABLE SCREENS:
 RULES:
 1. If user intent matches a screen → return navigation response
 2. If user asks a general question or intent is unclear → return no-navigation response
-3. You support English, Arabic, and Urdu — detect and respond in the same language
+3. You support English, Arabic, and Urdu — detect and respond in the SAME language the user used
 4. Never make up screen names — only use screens listed above
-5. Be smart about matching — "show me my money" should match myFinances, "I'm late" should match lateLogin
+5. Be smart — "show me my money" → myFinances, "I am late" → lateLogin, "مجھے چھٹی چاہیے" → leaves
 
 RESPONSE FORMAT when navigation found:
 {{
-  "message": "friendly message in user's language directing them to the screen",
+  "message": "friendly short message in user's language directing them to the screen",
   "navigate": true,
   "navigation": "exact navigation key from the list",
   "navigationText": "screen display name",
@@ -255,6 +303,8 @@ RESPONSE FORMAT when no navigation found:
   "navigationText": null,
   "id": null
 }}
+
+IMPORTANT: Return raw JSON only. No markdown. No backticks. No explanation. Just the JSON object.
 """
 
 # ─── conversation history ─────────────────────────────────────────────────────
@@ -263,87 +313,220 @@ conversation_history = []
 
 # ─── request model ────────────────────────────────────────────────────────────
 
-class Message(BaseModel):
-    message: str
+class ChatRequest(BaseModel):
+    type: str                        # "text" or "audio"
+    message: Optional[str] = None   # filled when type = "text"
+    url: Optional[str] = None       # filled when type = "audio" — S3 signed URL
+
+# ─── helpers ─────────────────────────────────────────────────────────────────
+
+def process_with_claude(text: str) -> dict:
+    """Run text through Claude navigation logic and return parsed response."""
+    conversation_history.append({
+        "role": "user",
+        "content": text
+    })
+
+    response = anthropic_client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=300,
+        system=SYSTEM_PROMPT,
+        messages=conversation_history
+    )
+
+    raw_answer = response.content[0].text.strip()
+    print(f"Claude raw response: {raw_answer}")
+
+    # strip markdown code blocks if claude wrapped the response
+    if raw_answer.startswith("```"):
+        raw_answer = raw_answer.split("```")[1]
+        if raw_answer.startswith("json"):
+            raw_answer = raw_answer[4:]
+        raw_answer = raw_answer.strip()
+
+    try:
+        parsed = json.loads(raw_answer)
+    except json.JSONDecodeError:
+        print(f"JSON parse failed: {raw_answer}")
+        parsed = {
+            "message": "I could not understand that. Please try again.",
+            "navigate": False,
+            "navigation": None,
+            "navigationText": None,
+            "id": None
+        }
+
+    conversation_history.append({
+        "role": "assistant",
+        "content": raw_answer
+    })
+
+    return parsed
+
+
+async def download_and_transcribe(s3_url: str) -> dict:
+    """Download audio file from S3 signed URL and transcribe using Whisper."""
+
+    # download audio bytes from S3
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.get(s3_url)
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to download audio from S3. Status: {response.status_code}"
+            )
+        audio_bytes = response.content
+
+    # extract file extension from URL path (strip query params first)
+    url_path = s3_url.split("?")[0]
+    suffix = os.path.splitext(url_path)[1] or ".mp4"
+
+    # write to temp file so Whisper can read it
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+
+    try:
+        with open(tmp_path, "rb") as audio_file:
+            transcription = openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                response_format="verbose_json",
+            )
+        return {
+            "text": transcription.text,
+            "language": transcription.language
+        }
+    finally:
+        os.unlink(tmp_path)
 
 # ─── routes ──────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
-    return {"status": "Navigation bot is running!", "screens": len(NAVIGATION_MAP)}
+    return {
+        "status": "Navigation bot is running",
+        "screens": len(NAVIGATION_MAP),
+        "supported_types": ["text", "audio"]
+    }
+
 
 @app.post("/chat")
-def chat(body: Message):
-    conversation_history.append({
-        "role": "user",
-        "content": body.message
-    })
+async def chat(body: ChatRequest):
+    """
+    Unified endpoint — handles both text and audio input.
 
+    Text example:
+    POST /chat
+    { "type": "text", "message": "I need a leave", "url": null }
+
+    Audio example:
+    POST /chat
+    { "type": "audio", "message": null, "url": "https://buddyapp-dev-bucket.s3.amazonaws.com/..." }
+
+    Response (both types return same shape):
+    {
+        "message": "Here are your leaves",
+        "navigate": true,
+        "navigation": "leaves",
+        "navigationText": "Leaves",
+        "id": 700,
+        "input_type": "audio",
+        "transcribed_text": "I need a leave",   <- null for text input
+        "language_detected": "en"               <- null for text input
+    }
+    """
     try:
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=300,
-            system=SYSTEM_PROMPT,
-            messages=conversation_history
-        )
 
-        raw_answer = response.content[0].text.strip()
-        
-        # debug — print what claude actually returned
-        print(f"Claude raw response: {raw_answer}")
+        # ── text input ────────────────────────────────────────────────────────
+        if body.type == "text":
+            if not body.message or not body.message.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="message field is required when type is text"
+                )
 
-        # strip markdown code blocks if claude added them
-        if raw_answer.startswith("```"):
-            raw_answer = raw_answer.split("```")[1]
-            if raw_answer.startswith("json"):
-                raw_answer = raw_answer[4:]
-            raw_answer = raw_answer.strip()
+            result = process_with_claude(body.message.strip())
 
-        # parse the JSON response from claude
-        try:
-            parsed = json.loads(raw_answer)
-        except json.JSONDecodeError:
-            print(f"JSON parse failed for: {raw_answer}")
-            parsed = {
-                "message": "I'm sorry, I didn't understand that. Could you rephrase?",
-                "navigate": False,
-                "navigation": None,
-                "navigationText": None,
-                "id": None
+            return {
+                **result,
+                "input_type": "text",
+                "transcribed_text": None,
+                "language_detected": None,
+                "question": body.message.strip()
             }
 
-        conversation_history.append({
-            "role": "assistant",
-            "content": raw_answer
-        })
+        # ── audio input ───────────────────────────────────────────────────────
+        elif body.type == "audio":
+            if not body.url or not body.url.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="url field is required when type is audio"
+                )
 
-        return parsed
+            # step 1 — download from S3 and transcribe with Whisper
+            print(f"Downloading audio from S3...")
+            transcription = await download_and_transcribe(body.url)
+            transcribed_text = transcription["text"]
+            language_detected = transcription["language"]
+            print(f"Transcribed [{language_detected}]: {transcribed_text}")
 
+            # step 2 — process transcribed text through Claude
+            result = process_with_claude(transcribed_text)
+
+            return {
+                **result,
+                "input_type": "audio",
+                "transcribed_text": transcribed_text,
+                "language_detected": language_detected,
+                "question": transcribed_text
+            }
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid type '{body.type}'. Accepted values: 'text' or 'audio'"
+            )
+
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Unexpected error: {e}")
         return {
             "message": "Something went wrong. Please try again.",
             "navigate": False,
             "navigation": None,
             "navigationText": None,
             "id": None,
+            "input_type": body.type,
+            "transcribed_text": None,
+            "language_detected": None,
             "error": str(e)
         }
+
+
 @app.get("/history")
 def get_history():
     return {"history": conversation_history}
+
 
 @app.delete("/clear")
 def clear_history():
     conversation_history.clear()
     return {"status": "History cleared!"}
 
+
 @app.get("/screens")
 def get_screens():
     return {
         "total": len(NAVIGATION_MAP),
         "screens": [
-            {"key": k, "navigation": v["navigation"], "label": v["navigationText"]}
+            {
+                "key": k,
+                "navigation": v["navigation"],
+                "label": v["navigationText"],
+                "id": v["id"]
+            }
             for k, v in NAVIGATION_MAP.items()
         ]
     }
