@@ -35,6 +35,9 @@ openai_client = openai.OpenAI(
 # ─── navigation enum ─────────────────────────────────────────────────────────
 
 class Nav(str, Enum):
+    def __str__(self):
+        return self.value
+
     LATE_LOGIN                  = "lateLogin"
     NOTIFICATIONS               = "Notifications"
     MY_CALENDAR                 = "myCalendar"
@@ -112,7 +115,7 @@ NAVIGATION_MAP = {
         "navigationText": "HR",
         "vectors": [
             "HR", "Everything you need related to your leaves, documents and payslips",
-            "Leaves", "Documents", "Passport", "insurance", "VISA",
+            "Leaves","sick leave","emergancy leave", "Documents", "Passport", "insurance", "VISA",
             "Passport collection", "Payslips", "talk to hr", "human resources",
             "الموارد البشرية", "ایچ آر", "دستاویزات", "تنخواہ"
         ]
@@ -282,13 +285,13 @@ AVAILABLE SCREENS:
 RULES:
 1. If user intent matches a screen → return navigation response
 2. If user asks a general question or intent is unclear → return no-navigation response
-3. You support English, Arabic, and Urdu — detect and respond in the SAME language the user used
+3. CRITICAL — Language rule: Identify the language of the user's message. The "message" field in your JSON response MUST be written in that EXACT same language. If the user writes in French, respond in French. If Turkish, respond in Turkish. If Urdu, respond in Urdu. NEVER respond in English unless the user wrote in English.
 4. Never make up screen names — only use screens listed above
 5. Be smart — "show me my money" → myFinances, "I am late" → lateLogin, "مجھے چھٹی چاہیے" → leaves
 
 RESPONSE FORMAT when navigation found:
 {{
-  "message": "friendly short message in user's language directing them to the screen",
+  "message": "friendly short message written in the SAME language as the user's input",
   "navigate": true,
   "navigation": "exact navigation key from the list",
   "navigationText": "screen display name",
@@ -297,7 +300,7 @@ RESPONSE FORMAT when navigation found:
 
 RESPONSE FORMAT when no navigation found:
 {{
-  "message": "helpful response in user's language",
+  "message": "helpful response written in the SAME language as the user's input",
   "navigate": false,
   "navigation": null,
   "navigationText": null,
